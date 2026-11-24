@@ -1,0 +1,27 @@
+name: Recordatorios de reservación
+
+on:
+  schedule:
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Revisar llegadas de los próximos dos días
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          REMINDER_CRON_TOKEN: ${{ secrets.REMINDER_CRON_TOKEN }}
+        run: |
+          test -n "$SUPABASE_URL" && test -n "$SUPABASE_ANON_KEY" && test -n "$REMINDER_CRON_TOKEN"
+          curl --fail-with-body --silent --show-error \
+            "$SUPABASE_URL/functions/v1/reservation-notifications" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "x-cron-token: $REMINDER_CRON_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data '{"action":"send_reminders"}'
