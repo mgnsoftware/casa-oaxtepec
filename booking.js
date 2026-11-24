@@ -120,9 +120,9 @@
     const whatsappMessage = [
       'Nueva solicitud de Casa Oaxtepec',
       `Folio: ${reservationId}`,
-      `Nombre: ${data.guest_name}`,
-      `Correo: ${data.guest_email}`,
-      `Teléfono: ${data.guest_phone || 'No proporcionado'}`,
+      `Nombre: ${data.p_guest_name}`,
+      `Correo: ${data.p_guest_email}`,
+      `Teléfono: ${data.p_guest_phone || 'No proporcionado'}`,
       `Llegada: ${data.p_check_in}`,
       `Salida: ${data.p_check_out}`,
       `Huéspedes: ${data.p_guests}`,
