@@ -6,18 +6,18 @@ Sitio estático publicado con GitHub Pages. Las 21 fotografías originales se co
 
 Abre `index.html` directamente o sirve la carpeta con cualquier servidor estático. No se requieren dependencias para la galería.
 
-## Supabase
+## Supabase y reservaciones
 
-`supabase/schema.sql` contiene el esquema y las políticas aplicadas para galería, reservaciones, promociones y cupones. `supabase-config.js` usa el Project URL y la clave publishable, apta para el navegador con RLS habilitada. La página consulta las fotos activas y conserva `pics/` como respaldo.
+`supabase/schema.sql` contiene las tablas y políticas de galería, reservaciones, promociones y cupones. `supabase/reservations.sql` agrega las funciones seguras de calendario y captura. Aplica primero el esquema inicial si aún no existe y luego ejecuta la migración de reservaciones desde SQL Editor. Ambos scripts se limitan al esquema `public` y al bucket `gallery`.
 
-El sitio aún no envía solicitudes a Supabase. El formulario permanece deshabilitado hasta que se configure un endpoint seguro de reservaciones. Ese endpoint debe validar fechas y capacidad, limitar envíos abusivos, insertar como `pending`, notificar al anfitrión y nunca aceptar del navegador un precio, estado aprobado o referencia de pago. La clave `service_role` debe quedar exclusivamente en secretos del servidor/Edge Function.
+`supabase-config.js` usa el Project URL, la clave publishable del navegador y el WhatsApp del propietario. La página consulta las fotos activas y conserva `pics/` como respaldo. El RPC `get_unavailable_dates` devuelve solo fechas confirmadas, sin datos de huéspedes. `submit_reservation_request` valida y guarda cada solicitud como `pending`; no acepta del navegador un estado, precio o referencia de pago. Las noches pendientes no se bloquean.
 
-## Siguientes pasos para producción
+Flujo de propietario: revisar filas nuevas de `public.reservations` en Table Editor; cambiar `pending` a `approved` cuando autorice y envíe instrucciones de depósito; verificar el depósito por fuera del sitio y cambiar el estado a `confirmed`. Solo `confirmed` aparece ocupado y un trigger impide confirmar rangos que se traslapen. `declined` o `cancelled` no bloquean. Tras registrar la solicitud, el cliente obtiene un enlace a WhatsApp con el mensaje preparado y debe pulsar Enviar.
 
-1. Revisar el esquema contra el proyecto Supabase existente y migrar sin borrar datos.
-2. Conectar la galería al bucket y tabla; completar las descripciones reales de cada foto.
-3. Crear autenticación de administración con MFA y rol asignado solo desde servidor.
-4. Implementar Edge Functions para solicitudes, aprobación, avisos por correo y creación/verificación de pagos.
-5. Elegir pasarela y configurar sus credenciales de prueba y webhooks firmados antes de habilitar cobros.
+El propietario aún verifica depósitos manualmente. No se ha conectado una pasarela, correo automático, ni panel administrativo propio. Nunca publiques una clave `service_role`.
+
+## SEO
+
+Incluye título y descripción en español, URL canónica, Open Graph, datos estructurados de alojamiento, `robots.txt` y `sitemap.xml`. Estas señales ayudan a los buscadores a entender e indexar el sitio, pero no garantizan aparecer en los primeros resultados. Después de publicar, registra el sitemap en Google Search Console y Bing Webmaster Tools.
 
 El sitio está alojado como frontend estático: las credenciales privadas, decisiones de reservación, correos y pagos no se deben implementar en JavaScript público.
