@@ -11,6 +11,31 @@
   const checkOutInput = document.getElementById('checkout');
   const monthLabel = document.getElementById('calendarMonth');
   const calendarDays = document.getElementById('calendarDays');
+  const formGrid = form.querySelector('.form-grid');
+  const consentText = form.querySelector('.consent span');
+  consentText.textContent = 'Autorizo guardar mis datos de contacto, fechas y, si registro vehículos, sus placas y datos de acceso para gestionar la solicitud, enviar avisos de la estancia por correo electrónico y, cuando esté habilitado, WhatsApp, y preparar la autorización de ingreso.';
+  function addBookingField(labelText, name, type, options = {}) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `field${options.full ? ' full' : ''}`;
+    const label = document.createElement('label'); label.textContent = labelText; label.htmlFor = `booking-${name}`;
+    let input;
+    if (options.select) {
+      input = document.createElement('select');
+      options.select.forEach(([value, text]) => { const option = document.createElement('option'); option.value = value; option.textContent = text; input.append(option); });
+    } else { input = document.createElement('input'); input.type = type; }
+    input.id = `booking-${name}`; input.name = name;
+    Object.entries(options.attrs || {}).forEach(([key, value]) => input.setAttribute(key, value));
+    wrapper.append(label, input); formGrid.append(wrapper);
+    return input;
+  }
+  const eventInput = addBookingField('Tipo de evento', 'event_type', 'text', { attrs: { maxlength: '100', placeholder: 'Reunión familiar, descanso…' } });
+  const arrivalTimeInput = addBookingField('Hora de llegada', 'check_in_time', 'time', { attrs: { value: '09:00', required: '' } });
+  const departureTimeInput = addBookingField('Hora de salida', 'check_out_time', 'time', { attrs: { value: '18:00', required: '' } });
+  const vehicleCountInput = addBookingField('Número de automóviles', 'vehicle_count', 'number', { attrs: { min: '0', max: '12', value: '0', required: '' } });
+  const vehicleField = document.createElement('div'); vehicleField.className = 'field full'; vehicleField.innerHTML = '<label>Datos de vehículos para el acceso</label><div id="vehicleDetails" class="form-grid"></div>'; formGrid.append(vehicleField);
+  const vehicleDetails = vehicleField.querySelector('#vehicleDetails');
+  const quotePreview = document.createElement('div'); quotePreview.className = 'availability field full'; quotePreview.id = 'quotePreview'; quotePreview.textContent = 'Selecciona llegada y salida para consultar el precio estimado.';
+  form.insertBefore(quotePreview, form.querySelector('.consent'));
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const toIsoDate = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -23,6 +48,8 @@
   let selectedCheckOut = '';
   let selectingDeparture = false;
   let availabilityLoaded = false;
+  let currentQuote = null;
+  let quoteSequence = 0;
 
   function nightIsUnavailable(date) {
     return confirmedStays.some(stay => date >= stay.check_in && date < stay.check_out);
@@ -86,6 +113,7 @@
       selectingDeparture = false;
       checkOutInput.value = iso;
       message.textContent = '';
+      refreshQuote();
     }
     renderCalendar();
   }
@@ -126,6 +154,11 @@
       `Llegada: ${data.p_check_in}`,
       `Salida: ${data.p_check_out}`,
       `Huéspedes: ${data.p_guests}`,
+      `Automóviles: ${data.p_vehicle_count}`,
+      ...(data.p_vehicle_details || []).map((vehicle, index) => `Auto ${index + 1}: ${vehicle.vehicle || 'Vehículo'} · ${vehicle.color} · placas ${vehicle.plate} · conductor ${vehicle.driver} · ${vehicle.occupants} personas`),
+      `Precio antes de descuento: $${currentQuote?.base_total ?? '—'} MXN`,
+      `Descuento: $${currentQuote?.discount_total ?? '—'} MXN`,
+      `Total estimado: $${currentQuote?.total ?? '—'} MXN`,
       `Mensaje: ${data.p_guest_message || 'Sin mensaje'}`,
       'Estado: PENDIENTE DE AUTORIZACIÓN'
     ].join('\n');
@@ -138,6 +171,42 @@
     message.append(document.createElement('br'), link);
   }
 
+  function renderVehicleInputs() {
+    const count = Math.max(0, Math.min(12, Number(vehicleCountInput.value || 0)));
+    vehicleDetails.replaceChildren();
+    for (let index = 0; index < count; index += 1) {
+      const group = document.createElement('fieldset');
+      group.className = 'field full';
+      group.style.cssText = 'border:1px solid #e5e6df;border-radius:8px;padding:10px 12px';
+      const legend = document.createElement('legend'); legend.textContent = `Automóvil ${index + 1}`; group.append(legend);
+      const row = document.createElement('div'); row.className = 'form-grid';
+      [['driver','Conductor','text'],['vehicle','Marca y modelo (opcional)','text'],['plate','Placas','text'],['color','Color','text'],['occupants','Personas en este auto','number']].forEach(([key,label,type]) => {
+        const wrap = document.createElement('div'); wrap.className = 'field'; const labelNode = document.createElement('label'); labelNode.textContent = label; labelNode.htmlFor = `vehicle-${index}-${key}`;
+        const input = document.createElement('input'); input.type = type; input.id = labelNode.htmlFor; input.name = `vehicle_${index}_${key}`; input.dataset.vehicleIndex = String(index); input.dataset.vehicleKey = key;
+        if (key === 'occupants') { input.min = '1'; input.max = '12'; input.value = '1'; input.required = true; }
+        if (['driver','plate','color'].includes(key)) { input.required = true; input.maxLength = key === 'plate' ? 20 : 120; }
+        if (key === 'plate') input.placeholder = 'Ej. ABC-123';
+        wrap.append(labelNode,input); row.append(wrap);
+      });
+      group.append(row); vehicleDetails.append(group);
+    }
+  }
+  vehicleCountInput.addEventListener('input', renderVehicleInputs);
+  renderVehicleInputs();
+
+  async function refreshQuote() {
+    const sequence = ++quoteSequence;
+    if (!selectedCheckIn || !selectedCheckOut) { currentQuote = null; quotePreview.textContent = 'Selecciona llegada y salida para consultar el precio estimado.'; return; }
+    quotePreview.textContent = 'Calculando precio estimado…';
+    try {
+      const response = await fetch(`${baseUrl}/rest/v1/rpc/quote_reservation`, { method:'POST', headers:{apikey:apiKey,Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json'}, body:JSON.stringify({p_check_in:selectedCheckIn,p_check_out:selectedCheckOut}) });
+      if (!response.ok) throw new Error('No se pudo calcular el precio.');
+      const quote = await response.json(); if (sequence !== quoteSequence) return;
+      currentQuote = quote;
+      quotePreview.textContent = `${quote.nights} noches · Antes de descuento ${new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(quote.base_total)} · Descuento ${new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(quote.discount_total)} · Total estimado ${new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(quote.total)}. El anfitrión validará la cotización antes de solicitar el depósito.`;
+    } catch (error) { if (sequence === quoteSequence) { currentQuote = null; quotePreview.textContent = error.message || 'No se pudo calcular el precio.'; } }
+  }
+
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (!availabilityLoaded) {
@@ -147,6 +216,20 @@
     if (!selectedCheckIn || !selectedCheckOut || selectedCheckOut <= selectedCheckIn) {
       message.textContent = 'Selecciona llegada y salida en el calendario.';
       return;
+    }
+    const vehicleCount = Number(vehicleCountInput.value || 0);
+    const vehicleRows = Array.from({ length: vehicleCount }, (_, index) => {
+      const value = key => vehicleDetails.querySelector(`[data-vehicle-index="${index}"][data-vehicle-key="${key}"]`)?.value.trim() || '';
+      return { driver:value('driver'), vehicle:value('vehicle'), plate:value('plate'), color:value('color'), occupants:Number(value('occupants') || 0) };
+    });
+    if (vehicleRows.some(vehicle => !vehicle.driver || !vehicle.plate || !vehicle.color || vehicle.occupants < 1)
+      || vehicleRows.reduce((sum, vehicle) => sum + vehicle.occupants, 0) > Number(form.guests.value)) {
+      message.textContent = 'Completa conductor, placas, color y personas de cada automóvil. La suma de ocupantes no puede superar los huéspedes.';
+      return;
+    }
+    if (!currentQuote || currentQuote.check_in !== selectedCheckIn || currentQuote.check_out !== selectedCheckOut) {
+      await refreshQuote();
+      if (!currentQuote) { message.textContent = 'No se pudo obtener una cotización vigente. Inténtalo nuevamente.'; return; }
     }
     if (stayConflicts(selectedCheckIn, selectedCheckOut)) {
       message.textContent = 'Alguien confirmó esas fechas hace un momento. Actualiza la página y elige otras.';
@@ -165,10 +248,15 @@
       p_check_out: selectedCheckOut,
       p_guests: Number(formData.get('guests')),
       p_guest_message: formData.get('message') || null,
-      p_website: formData.get('website') || ''
+      p_website: formData.get('website') || '',
+      p_event_type: formData.get('event_type') || null,
+      p_check_in_time: formData.get('check_in_time') || '09:00',
+      p_check_out_time: formData.get('check_out_time') || '18:00',
+      p_vehicle_count: vehicleCount,
+      p_vehicle_details: vehicleRows
     };
     try {
-      const response = await fetch(`${baseUrl}/rest/v1/rpc/submit_reservation_request`, {
+      const response = await fetch(`${baseUrl}/rest/v1/rpc/submit_reservation_request_v2`, {
         method: 'POST',
         headers: { apikey: apiKey, Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(data)
@@ -178,14 +266,16 @@
         if (details.code === '23P01') throw new Error('Esas fechas se acaban de ocupar. Actualiza el calendario y prueba otras.');
         throw new Error('No se pudo guardar la solicitud. Inténtalo de nuevo en unos minutos.');
       }
-      const reservationId = await response.json();
+      const result = await response.json();
       form.reset();
       selectedCheckIn = '';
       selectedCheckOut = '';
       selectingDeparture = false;
-      const readableId = Array.isArray(reservationId) ? reservationId[0] : reservationId;
+      currentQuote = null;
+      renderVehicleInputs(); quotePreview.textContent = 'Selecciona llegada y salida para consultar el precio estimado.';
+      const readableId = result.id;
       message.className = 'form-message status-pending';
-      message.append(document.createTextNode(`Solicitud ${readableId} guardada como pendiente. Las fechas no se bloquearán hasta que el propietario confirme el depósito. `));
+      message.append(document.createTextNode(`Solicitud ${readableId} guardada como pendiente. Total estimado ${new Intl.NumberFormat('es-MX',{style:'currency',currency:'MXN'}).format(result.quote.total)}. Las fechas no se bloquearán hasta que el propietario confirme el depósito. `));
       showWhatsAppLink(readableId, data);
       renderCalendar();
     } catch (error) {
